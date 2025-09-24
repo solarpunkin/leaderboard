@@ -1,0 +1,5 @@
+ruff
+pytest
+boto3
+kafka-python
+prometheus-client
