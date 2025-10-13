@@ -1,74 +1,81 @@
-import json
 import os
+import json
 import time
 from collections import Counter
+from confluent_kafka import Consumer
+from google.cloud import storage
+import pyarrow as pa
+import pyarrow.parquet as pq
+import google.auth
+import google.auth.transport.requests
 
 # --- Configuration ---
-KAFKA_DIR = os.path.join(os.path.dirname(__file__), '../../data/kafka_events')
-HDFS_DIR = os.path.join(os.path.dirname(__file__), '../../data/hdfs_storage')
-PROCESSED_LOG_FILE = os.path.join(HDFS_DIR, 'processed_log.txt')
+KAFKA_BROKERS = os.environ.get('KAFKA_BROKERS')
+KAFKA_TOPIC = os.environ.get('KAFKA_TOPIC', 'leaderboard_events')
+GCS_BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME')
 
-def get_processed_files():
-    """Reads the set of already processed file names from the log."""
-    if not os.path.exists(PROCESSED_LOG_FILE):
-        return set()
-    with open(PROCESSED_LOG_FILE, 'r') as f:
-        return set(line.strip() for line in f)
+# --- GCP Clients ---
+storage_client = storage.Client()
+creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
 
-def log_processed_file(filename):
-    """Appends a processed file name to the log."""
-    with open(PROCESSED_LOG_FILE, 'a') as f:
-        f.write(filename + '\n')
+def oauth_cb(oauth_config):
+    auth_req = google.auth.transport.requests.Request()
+    creds.refresh(auth_req)
+    return creds.token, int(time.time() + 3600)
 
 def process_batch():
-    """
-    Simulates a batch processing job (like Spark).
-    - Reads new events from the queue.
-    - Computes exact counts for the batch.
-    - Saves the result to a new batch file in the HDFS simulation dir.
-    - Logs the files it has processed.
-    """
-    if not os.path.exists(HDFS_DIR):
-        os.makedirs(HDFS_DIR)
+    consumer_config = {
+        'bootstrap.servers': KAFKA_BROKERS,
+        'security.protocol': 'SASL_SSL',
+        'sasl.mechanisms': 'OAUTHBEARER',
+        'sasl.oauthbearer.config': oauth_cb,
+        'group.id': 'batch-processor-group',
+        'auto.offset.reset': 'earliest'
+    }
 
-    processed_files = get_processed_files()
+    consumer = Consumer(consumer_config)
+
+    consumer.subscribe([KAFKA_TOPIC])
+    print("Starting Kafka consumer for batch processing...")
+
     batch_counts = Counter()
-    newly_processed = []
+    message_count = 0
+    
+    # Consume for a limited time to form a batch
+    end_time = time.time() + 60 # Consume for 60 seconds
+    while time.time() < end_time:
+        msg = consumer.poll(1.0)
 
-    print("Starting batch processing...")
-    for filename in sorted(os.listdir(KAFKA_DIR)):
-        if not filename.endswith('.json') or filename in processed_files:
+        if msg is None:
+            continue
+        if msg.error():
+            print(f"Consumer error: {msg.error()}")
             continue
 
-        file_path = os.path.join(KAFKA_DIR, filename)
-        try:
-            with open(file_path, 'r') as f:
-                event = json.load(f)
-            
-            batch_counts[event['event_id']] += 1
-            newly_processed.append(filename)
-            print(f"Read event {event['message_id']} for event_id: {event['event_id']}")
+        event = json.loads(msg.value().decode('utf-8'))
+        batch_counts[event['event_id']] += 1
+        message_count += 1
 
-        except (json.JSONDecodeError, KeyError) as e:
-            print(f"Error processing file {filename}: {e}")
+    consumer.close()
 
-    if newly_processed:
-        # Format the output
-        output_data = [{'event_id': event_id, 'count': count} for event_id, count in batch_counts.items()]
-        
-        # Save the batch result to a new file
+    if message_count > 0:
+        output_data = [{'event_id': eid, 'count': c} for eid, c in batch_counts.items()]
         batch_timestamp = int(time.time())
-        output_filename = os.path.join(HDFS_DIR, f'batch_{{batch_timestamp}}.json')
-        with open(output_filename, 'w') as f:
-            json.dump(output_data, f, indent=2)
-        
-        print(f"Batch processing complete. Result saved to {output_filename}")
+        output_key = f'batches/batch_{batch_timestamp}.parquet'
 
-        # Update the log of processed files
-        for filename in newly_processed:
-            log_processed_file(filename)
+        # Create a PyArrow Table
+        table = pa.Table.from_pylist(output_data)
+
+        # Write to GCS
+        bucket = storage_client.bucket(GCS_BUCKET_NAME)
+        blob = bucket.blob(output_key)
+        
+        with blob.open("wb") as f:
+            pq.write_table(table, f)
+
+        print(f"Saved batch file to gs://{GCS_BUCKET_NAME}/{output_key}")
     else:
-        print("No new events for batch processing.")
+        print("No messages in batch.")
 
 if __name__ == '__main__':
     process_batch()

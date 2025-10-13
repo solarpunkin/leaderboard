@@ -1,40 +1,39 @@
-import json
 import os
-import time
+import json
 import uuid
+import time
+from confluent_kafka import Producer
+import google.auth
+import google.auth.transport.requests
 
-def publish_event(event_id, event_type):
-    """
-    Simulates publishing an event to the Kafka queue.
+# --- Configuration ---
+KAFKA_BROKERS = os.environ.get('KAFKA_BROKERS')
+KAFKA_TOPIC = os.environ.get('KAFKA_TOPIC', 'leaderboard_events')
 
-    An event is a JSON object with an event_id, type, timestamp, and a unique message_id.
-    It's written to a file in the kafka_events directory.
-    """
-    event = {
-        'message_id': str(uuid.uuid4()),
-        'event_id': event_id,
-        'event_type': event_type,
-        'timestamp': int(time.time())
+creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+
+def oauth_cb(oauth_config):
+    auth_req = google.auth.transport.requests.Request()
+    creds.refresh(auth_req)
+    return creds.token, int(time.time() + 3600)
+
+def main():
+    producer_config = {
+        'bootstrap.servers': KAFKA_BROKERS,
+        'security.protocol': 'SASL_SSL',
+        'sasl.mechanisms': 'OAUTHBEARER',
+        'sasl.oauthbearer.config': oauth_cb
     }
-    
-    kafka_dir = os.path.join(os.path.dirname(__file__), '../../data/kafka_events')
-    if not os.path.exists(kafka_dir):
-        os.makedirs(kafka_dir)
-        
-    file_path = os.path.join(kafka_dir, f"{event['message_id']}.json")
-    
-    with open(file_path, 'w') as f:
-        json.dump(event, f)
-        
-    print(f"Published event: {event}")
+
+    producer = Producer(producer_config)
+
+    while True:
+        event_id = str(uuid.uuid4())
+        data = {'event_id': event_id}
+        producer.produce(KAFKA_TOPIC, key=event_id, value=json.dumps(data))
+        producer.flush()
+        print(f"Published event {event_id} to topic {KAFKA_TOPIC}")
+        time.sleep(1)
 
 if __name__ == '__main__':
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Publish an event.')
-    parser.add_argument('event_id', type=str, help='The ID of the event (e.g., song_id, product_id).')
-    parser.add_argument('--event_type', type=str, default='view', help='The type of the event (e.g., view, click).')
-    
-    args = parser.parse_args()
-    
-    publish_event(args.event_id, args.event_type)
+    main()

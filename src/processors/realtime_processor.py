@@ -1,87 +1,93 @@
-import json
 import os
-import sys
-
-# Add common directory to path to import CountMinSketch
-sys.path.append(os.path.join(os.path.dirname(__file__), '../common'))
-from count_min_sketch import CountMinSketch
+import json
+import time
+from confluent_kafka import Consumer
+from google.cloud import storage
+from common.count_min_sketch import CountMinSketch
+import google.auth
+import google.auth.transport.requests
 
 # --- Configuration ---
-KAFKA_DIR = os.path.join(os.path.dirname(__file__), '../../data/kafka_events')
-TS_DB_DIR = os.path.join(os.path.dirname(__file__), '../../data/ts_db')
-PROCESSED_LOG_FILE = os.path.join(TS_DB_DIR, 'processed_log.txt')
-SKETCH_STATE_FILE = os.path.join(TS_DB_DIR, 'cms_state.json')
+KAFKA_BROKERS = os.environ.get('KAFKA_BROKERS')
+KAFKA_TOPIC = os.environ.get('KAFKA_TOPIC', 'leaderboard_events')
+GCS_BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME')
+SKETCH_STATE_KEY = 'state/cms_state.json'
 
-# CMS parameters
+# --- CMS Configuration ---
 CMS_WIDTH = 1000
 CMS_DEPTH = 5
 
-def load_sketch():
-    """Loads the Count-Min Sketch from the state file, or creates a new one."""
-    if not os.path.exists(TS_DB_DIR):
-        os.makedirs(TS_DB_DIR)
+# --- GCP Clients ---
+storage_client = storage.Client()
+creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
 
+def oauth_cb(oauth_config):
+    auth_req = google.auth.transport.requests.Request()
+    creds.refresh(auth_req)
+    return creds.token, int(time.time() + 3600)
+
+def load_sketch():
+    bucket = storage_client.bucket(GCS_BUCKET_NAME)
+    blob = bucket.blob(SKETCH_STATE_KEY)
     sketch = CountMinSketch(width=CMS_WIDTH, depth=CMS_DEPTH)
-    if os.path.exists(SKETCH_STATE_FILE):
-        with open(SKETCH_STATE_FILE, 'r') as f:
-            sketch.sketch = json.load(f)
-        print("Loaded existing Count-Min Sketch from state.")
-    else:
-        print("Created a new Count-Min Sketch.")
+
+    try:
+        state_data = blob.download_as_string()
+        state = json.loads(state_data)
+        sketch.sketch = state
+        print("Loaded existing Count-Min Sketch from GCS.")
+    except Exception as e:
+        print(f"Could not load sketch, creating a new one: {e}")
+
     return sketch
 
 def save_sketch(sketch):
-    """Saves the sketch's state to a file."""
-    with open(SKETCH_STATE_FILE, 'w') as f:
-        json.dump(sketch.sketch, f)
-    print(f"Saved Count-Min Sketch state to {SKETCH_STATE_FILE}")
-
-def get_processed_files():
-    """Reads the set of already processed file names from the log."""
-    if not os.path.exists(PROCESSED_LOG_FILE):
-        return set()
-    with open(PROCESSED_LOG_FILE, 'r') as f:
-        return set(line.strip() for line in f)
-
-def log_processed_file(filename):
-    """Appends a processed file name to the log."""
-    with open(PROCESSED_LOG_FILE, 'a') as f:
-        f.write(filename + '\n')
+    bucket = storage_client.bucket(GCS_BUCKET_NAME)
+    blob = bucket.blob(SKETCH_STATE_KEY)
+    blob.upload_from_string(json.dumps(sketch.sketch))
+    print(f"Saved Count-Min Sketch state to GCS bucket {GCS_BUCKET_NAME}.")
 
 def process_events():
-    """
-    Processes new events from the Kafka directory, updates the sketch, and logs processed files.
-    """
     sketch = load_sketch()
-    processed_files = get_processed_files()
-    
-    events_processed = 0
-    newly_processed = []
 
-    for filename in sorted(os.listdir(KAFKA_DIR)):
-        if not filename.endswith('.json') or filename in processed_files:
-            continue
+    consumer_config = {
+        'bootstrap.servers': KAFKA_BROKERS,
+        'security.protocol': 'SASL_SSL',
+        'sasl.mechanisms': 'OAUTHBEARER',
+        'sasl.oauthbearer.config': oauth_cb,
+        'group.id': 'realtime-processor-group',
+        'auto.offset.reset': 'earliest'
+    }
 
-        file_path = os.path.join(KAFKA_DIR, filename)
-        
-        try:
-            with open(file_path, 'r') as f:
-                event = json.load(f)
-            
+    consumer = Consumer(consumer_config)
+
+    consumer.subscribe([KAFKA_TOPIC])
+    print("Starting Kafka consumer for real-time processing...")
+
+    processed_count = 0
+    try:
+        while True:
+            msg = consumer.poll(1.0)
+
+            if msg is None:
+                continue
+            if msg.error():
+                print(f"Consumer error: {msg.error()}")
+                continue
+
+            event = json.loads(msg.value().decode('utf-8'))
             sketch.add(event['event_id'])
-            events_processed += 1
-            newly_processed.append(filename)
-            print(f"Processed event: {event['message_id']} for event_id: {event['event_id']}")
+            processed_count += 1
 
-        except (json.JSONDecodeError, KeyError) as e:
-            print(f"Error processing file {filename}: {e}")
+            # Periodically save the sketch
+            if processed_count % 100 == 0:
+                save_sketch(sketch)
 
-    if events_processed > 0:
+    except KeyboardInterrupt:
+        pass
+    finally:
         save_sketch(sketch)
-        for filename in newly_processed:
-            log_processed_file(filename)
-    else:
-        print("No new events to process.")
+        consumer.close()
 
 if __name__ == '__main__':
     process_events()

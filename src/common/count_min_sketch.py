@@ -1,5 +1,4 @@
 import hashlib
-import math
 
 class CountMinSketch:
     """
