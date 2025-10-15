@@ -1,0 +1,23 @@
+The previously detalied issue with dataflow pipeline, Failed to construct kafka consumer and connect to kafka brokers is happening again.
+
+**Observations:**
+
+
+1. **DATAFLOW JOB DETAILS**: The Dataflow job `beamapp-gauravbhardwaj-1015132723-200523-1hbuyasm` (ID: `2025-10-15_06_28_57-17621254540501428795`) is currently running in the `us-central1` region, using Apache Beam Python 3.11 SDK version 2.68.0. 
+```gcloud dataflow jobs describe 2025-10-15_06_28_57-17621254540501428795 --region=us-central1```
+
+2. **Failed to construct kafka consumer**: A Dataflow worker reported the error: "generic::unknown: org.apache.beam.sdk.util.UserCodeException: org.apache.kafka.common.KafkaException: Failed to construct kafka consumer\n\t...Caused by: org.apache.kafka.common.config.ConfigException: No resolvable bootstrap urls given in bootstrap.servers". This indicates that the Dataflow pipeline is unable to connect to the Kafka brokers because the provided `bootstrap.servers` configuration is either incorrect or the Kafka broker hostnames are not resolvable.
+
+
+**HYPOTHESIS:**
+
+### Overview:
+The Dataflow pipeline is failing to connect to the Kafka brokers due to a configuration issue with the `bootstrap.servers` parameter. The error message "No resolvable bootstrap urls given in bootstrap.servers" indicates that the Dataflow workers are unable to resolve the hostnames or IP addresses provided in the `bootstrap.servers` configuration, or the parameter itself is malformed. This issue is preventing the Dataflow pipeline from consuming data from Kafka.
+
+### Recommended fixes:
+*   **Verify the `bootstrap.servers` parameter:** Ensure that the Kafka broker hostnames/IP addresses and ports are correct and properly formatted in your Dataflow pipeline code.
+*   **Check DNS resolution:** If you are using hostnames for your Kafka brokers, ensure that these hostnames are resolvable from within the network where your Dataflow workers are running. If your Kafka brokers are in a private network or use custom DNS entries, you might need to configure custom DNS settings for your Dataflow job's network. Consider using IP addresses directly in `bootstrap.servers` as a temporary measure to rule out DNS issues.
+*   **Review network connectivity and firewall rules:** Ensure that the Dataflow workers have network access to the Kafka brokers on the specified ports. Check firewall rules in both your GCP project and on the Kafka broker side to ensure that traffic is allowed between the Dataflow worker IPs and the Kafka broker IPs/ports. If your Kafka brokers are in a different VPC or on-premises, verify that VPC peering, VPN, or Cloud Interconnect is correctly configured and allows the necessary traffic.
+*   **Get the bootstrap server address:** To run a pipeline that connects to a Managed Service for Apache Kafka cluster, first get the cluster's bootstrap server address. You need this address when you configure the pipeline. You can use the Google Cloud console or the Google Cloud CLI. In the Google Cloud console, go to the **Clusters** page, click the cluster name, and then click the **Configurations** tab. Copy the bootstrap server address from **Bootstrap URL**.
+
+Relevant links: [Use Dataflow with Managed Service for Apache Kafka](https://cloud.google.com/dataflow/docs/guides/managed-service-for-apache-kafka)
