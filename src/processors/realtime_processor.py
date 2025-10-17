@@ -19,7 +19,7 @@ CMS_DEPTH = 5
 
 # --- GCP Clients ---
 storage_client = storage.Client()
-creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/kafka'])
+creds, project = google.auth.default()
 
 def oauth_cb(oauth_config):
     auth_req = google.auth.transport.requests.Request()

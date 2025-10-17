@@ -10,7 +10,7 @@ import google.auth.transport.requests
 KAFKA_BROKERS = os.environ.get('KAFKA_BROKERS')
 KAFKA_TOPIC = os.environ.get('KAFKA_TOPIC', 'leaderboard_events')
 
-creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/kafka'])
+creds, project = google.auth.default()
 
 def oauth_cb(oauth_config):
     auth_req = google.auth.transport.requests.Request()
