@@ -1,5 +1,11 @@
 ruff
 pytest
-boto3
-kafka-python
-prometheus-client
+confluent-kafka
+google-cloud-storage
+google-cloud-pubsub
+flask
+pyarrow
+redis
+apache-beam[gcp]
+
+

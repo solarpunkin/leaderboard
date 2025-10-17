@@ -19,7 +19,7 @@ CMS_DEPTH = 5
 
 # --- GCP Clients ---
 storage_client = storage.Client()
-creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/kafka'])
 
 def oauth_cb(oauth_config):
     auth_req = google.auth.transport.requests.Request()
@@ -54,7 +54,7 @@ def process_events():
         'bootstrap.servers': KAFKA_BROKERS,
         'security.protocol': 'SASL_SSL',
         'sasl.mechanisms': 'OAUTHBEARER',
-        'sasl.oauthbearer.config': oauth_cb,
+        'oauth_cb': oauth_cb,
         'group.id': 'realtime-processor-group',
         'auto.offset.reset': 'earliest'
     }

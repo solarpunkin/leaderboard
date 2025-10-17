@@ -18,7 +18,7 @@ variable "gcp_zone" {
 variable "gke_cluster_name" {
   description = "The name for the GKE cluster."
   type        = string
-  default     = "leaderboard-cluster"
+  default     = "leaderboard-cluster-v2"
 }
 
 variable "gcs_bucket_name" {

@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  leaderboard-api:
+    build: .
+    container_name: leaderboard-api
+    ports:
+      - "8000:8000" # Expose Prometheus metrics port
+    env_file:
+      - .env
+    command: ["python3", "src/leaderboard_service/service.py"]
+
+  realtime-processor:
+    build: .
+    container_name: realtime-processor
+    env_file:
+      - .env
+    command: ["python3", "src/processors/realtime_processor.py"]
+
+  batch-processor:
+    build: .
+    container_name: batch-processor
+    env_file:
+      - .env
+    # This command runs the batch processor once. 
+    # For development, you can run it on demand: docker-compose run --rm batch-processor
+    command: ["python3", "src/processors/batch_processor.py"]
+
+  event-publisher:
+    build: .
+    container_name: event-publisher
+    env_file:
+      - .env
+    # Example of running the publisher. Use 'docker-compose run' for interactive publishing.
+    # e.g., docker-compose run --rm event-publisher item_1
+    command: ["python3", "src/event_publisher/publisher.py", "test_event_1"]

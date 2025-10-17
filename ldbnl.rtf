@@ -1,0 +1,20 @@
+INFO:apache_beam.runners.dataflow.internal.apiclient:Starting GCS upload to gs://ldb_bucket-dataflow-staging/temp/beamapp-gauravbhardwaj-1017151812-370690-zmmx18si.1760714292.370813/beam-sdks-java-io-expansion-service-2.68.0-DlPxq5ePGVaO4Mfpmkn3NROOlbNjor7qSKlAF02OBD8.jar...
+WARNING:apache_beam.utils.retry:Retry with exponential backoff: waiting for 4.476777292604915 seconds before retrying stage_file_with_retry because we caught exception: ValueError: Bytes stream is in unexpected state. The local stream has had 125829120 bytes read from it while 83886080 bytes have already been updated (they should match).
+ Traceback for above exception (most recent call last):
+  File "/Users/gauravbhardwaj/Desktop/leaderboard/.venv/lib/python3.11/site-packages/apache_beam/utils/retry.py", line 300, in wrapper
+    return fun(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/gauravbhardwaj/Desktop/leaderboard/.venv/lib/python3.11/site-packages/apache_beam/runners/dataflow/internal/apiclient.py", line 712, in stage_file_with_retry
+    self.stage_file(
+  File "/Users/gauravbhardwaj/Desktop/leaderboard/.venv/lib/python3.11/site-packages/apache_beam/runners/dataflow/internal/apiclient.py", line 679, in stage_file
+    with BlobWriter(blob) as f:
+  File "/Users/gauravbhardwaj/Desktop/leaderboard/.venv/lib/python3.11/site-packages/google/cloud/storage/fileio.py", line 437, in close
+    self._upload_chunks_from_buffer(1)
+  File "/Users/gauravbhardwaj/Desktop/leaderboard/.venv/lib/python3.11/site-packages/google/cloud/storage/fileio.py", line 417, in _upload_chunks_from_buffer
+    upload.transmit_next_chunk(transport, **kwargs)
+  File "/Users/gauravbhardwaj/Desktop/leaderboard/.venv/lib/python3.11/site-packages/google/resumable_media/requests/upload.py", line 503, in transmit_next_chunk
+    method, url, payload, headers = self._prepare_request()
+                                    ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/gauravbhardwaj/Desktop/leaderboard/.venv/lib/python3.11/site-packages/google/resumable_media/_upload.py", line 627, in _prepare_request
+    raise ValueError(msg)
+

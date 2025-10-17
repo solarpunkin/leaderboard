@@ -3,20 +3,19 @@ import json
 import time
 from collections import Counter
 from confluent_kafka import Consumer
-from google.cloud import storage
-import pyarrow as pa
-import pyarrow.parquet as pq
+import redis
 import google.auth
 import google.auth.transport.requests
 
 # --- Configuration ---
 KAFKA_BROKERS = os.environ.get('KAFKA_BROKERS')
 KAFKA_TOPIC = os.environ.get('KAFKA_TOPIC', 'leaderboard_events')
-GCS_BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME')
+REDIS_HOST = os.environ.get('REDIS_HOST')
+REDIS_PORT = os.environ.get('REDIS_PORT')
 
 # --- GCP Clients ---
-storage_client = storage.Client()
 creds, project = google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])
+redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
 def oauth_cb(oauth_config):
     auth_req = google.auth.transport.requests.Request()
@@ -59,21 +58,13 @@ def process_batch():
     consumer.close()
 
     if message_count > 0:
-        output_data = [{'event_id': eid, 'count': c} for eid, c in batch_counts.items()]
-        batch_timestamp = int(time.time())
-        output_key = f'batches/batch_{batch_timestamp}.parquet'
-
-        # Create a PyArrow Table
-        table = pa.Table.from_pylist(output_data)
-
-        # Write to GCS
-        bucket = storage_client.bucket(GCS_BUCKET_NAME)
-        blob = bucket.blob(output_key)
-        
-        with blob.open("wb") as f:
-            pq.write_table(table, f)
-
-        print(f"Saved batch file to gs://{GCS_BUCKET_NAME}/{output_key}")
+        print(f"Updating Redis leaderboard with {len(batch_counts)} events.")
+        # Use a pipeline to send commands in a single transaction
+        pipe = redis_client.pipeline()
+        for event_id, count in batch_counts.items():
+            pipe.zadd('leaderboard', {event_id: count}, incr=True)
+        pipe.execute()
+        print(f"Successfully updated Redis leaderboard.")
     else:
         print("No messages in batch.")
 
