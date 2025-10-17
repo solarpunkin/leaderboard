@@ -3,7 +3,7 @@ kind: ConfigMap
 metadata:
   name: leaderboard-config
 data:
-  GCP_PROJECT_ID: "<your-gcp-project-id>"
+  GCP_PROJECT_ID: "aftermath-69"
   GCS_BUCKET_NAME: "ldb_bucket"
   KAFKA_TOPIC: "leaderboard_events"
   KAFKA_BROKERS: "bootstrap.leaderboard-kafka-cluster-main.us-central1.managedkafka.aftermath-69.cloud.goog:9092"

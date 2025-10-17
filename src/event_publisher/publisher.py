@@ -38,23 +38,27 @@ def main():
     producer = Producer(producer_config)
 
     print("Publishing events...")
+    msg_count = 0
     try:
         while True:
             event_id = str(uuid.uuid4())
             data = {'event_id': event_id}
-            
-            # produce() is non-blocking. It adds the message to a local buffer.
-            # The delivery_report callback will be triggered from poll() below.
             producer.produce(KAFKA_TOPIC, key=event_id, value=json.dumps(data), callback=delivery_report)
-            
-            # poll() serves delivery reports (callbacks) from previous produce() calls.
+            msg_count += 1
+
+            # The non-blocking poll is for serving callbacks quickly.
             producer.poll(0)
-            
-            time.sleep(0.1) # Sleep briefly to prevent a tight loop from consuming 100% CPU
+
+            # Periodically call flush() to block and wait for deliveries.
+            # This is what gives the client time to complete its auth handshake.
+            if msg_count % 100 == 0:
+                print(f"Flushing producer after {msg_count} messages...")
+                producer.flush(5) # Block for up to 5 seconds
+
     except KeyboardInterrupt:
         print("Shutting down...")
     finally:
-        # Wait for any outstanding messages to be delivered and delivery reports to be received.
+        print("Performing final flush...")
         producer.flush()
 
 if __name__ == '__main__':
