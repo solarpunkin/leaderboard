@@ -226,6 +226,7 @@ resource "google_redis_instance" "leaderboard_cache" {
   location_id    = var.gcp_zone
   authorized_network = google_compute_network.vpc_network.id
   connect_mode   = "PRIVATE_SERVICE_ACCESS"
+  transit_encryption_mode = "SERVER_AUTHENTICATION"
   depends_on = [google_service_networking_connection.private_service_connection]
 }
 
