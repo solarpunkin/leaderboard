@@ -32,7 +32,7 @@ CACHE_TTL_SECONDS = 60
 
 # --- Clients ---
 storage_client = storage.Client()
-redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True, ssl=True, ssl_cert_reqs=None)
 
 # --- CMS Configuration ---
 CMS_WIDTH = 1000

@@ -34,10 +34,9 @@ class WriteToRedisDoFn(beam.DoFn):
         self.redis_client = None
 
     def setup(self):
-        self.redis_client = redis.Redis(
-            host=self.redis_host, port=self.redis_port, decode_responses=True
-        )
-
+                    self.redis_client = redis.Redis(
+                        host=self.redis_host, port=self.redis_port, decode_responses=True, ssl=True, ssl_cert_reqs=None
+                    )
     def process(self, batch):
         try:
             pipe = self.redis_client.pipeline()

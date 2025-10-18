@@ -32,7 +32,8 @@ def main():
         'bootstrap.servers': KAFKA_BROKERS,
         'security.protocol': 'SASL_SSL',
         'sasl.mechanisms': 'OAUTHBEARER',
-        'oauth_cb': oauth_cb
+        'oauth_cb': oauth_cb,
+        'acks': 'all'
     }
 
     producer = Producer(producer_config)

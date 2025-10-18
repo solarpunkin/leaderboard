@@ -74,6 +74,10 @@ resource "google_container_cluster" "primary" {
   deletion_protection    = false
   remove_default_node_pool = true
   initial_node_count     = 1
+
+  workload_identity_config {
+    workload_pool = "${var.gcp_project_id}.svc.id.goog"
+  }
 }
 
 resource "google_container_node_pool" "primary_nodes" {
@@ -88,6 +92,9 @@ resource "google_container_node_pool" "primary_nodes" {
 
   node_config {
     machine_type    = "e2-standard-2"
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
     service_account = google_service_account.app_sa.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
   }
@@ -134,13 +141,6 @@ resource "google_project_iam_member" "kafka_client" {
   member  = "serviceAccount:${google_service_account.app_sa.email}"
 }
 
-resource "google_service_account_iam_member" "workload_identity_user" {
-  service_account_id = google_service_account.app_sa.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.gcp_project_id}.svc.id.goog[default/leaderboard-app-sa]"
-  depends_on         = [google_container_cluster.primary]
-}
-
 resource "google_storage_bucket_iam_member" "gcs_bucket_access" {
   bucket = data.google_storage_bucket.data_lake.name
   role   = "roles/storage.objectAdmin"
@@ -154,13 +154,13 @@ resource "google_managed_kafka_acl" "topic_access_acl" {
   acl_entries {
     host            = "*"
     permission_type = "ALLOW"
-    principal       = "User:*"
+    principal       = "User:${var.gcp_project_id}.svc.id.goog[default/leaderboard-app-sa]"
     operation       = "WRITE"
   }
   acl_entries {
     host            = "*"
     permission_type = "ALLOW"
-    principal       = "User:*"
+    principal       = "User:${var.gcp_project_id}.svc.id.goog[default/leaderboard-app-sa]"
     operation       = "READ"
   }
 }
@@ -172,7 +172,7 @@ resource "google_managed_kafka_acl" "consumer_group_acl" {
   acl_entries {
     host            = "*"
     permission_type = "ALLOW"
-    principal       = "User:*"
+    principal       = "User:${var.gcp_project_id}.svc.id.goog[default/leaderboard-app-sa]"
     operation       = "READ"
   }
 }
