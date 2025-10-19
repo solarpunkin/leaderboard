@@ -55,6 +55,7 @@ def process_events():
         'security.protocol': 'SASL_SSL',
         'sasl.mechanisms': 'OAUTHBEARER',
         'oauth_cb': oauth_cb,
+        'sasl.oauthbearer.method': 'oidc',
         'group.id': 'realtime-processor-group',
         'auto.offset.reset': 'earliest'
     }

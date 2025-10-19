@@ -32,6 +32,7 @@ def main():
         'bootstrap.servers': KAFKA_BROKERS,
         'security.protocol': 'SASL_SSL',
         'sasl.mechanisms': 'OAUTHBEARER',
+        'sasl.oauthbearer.method': 'oidc',
         'oauth_cb': oauth_cb,
         'acks': 'all'
     }
