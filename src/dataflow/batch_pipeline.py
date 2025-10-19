@@ -67,7 +67,6 @@ def run(argv=None):
                 "auto.offset.reset": "earliest",
                 "security.protocol": "SASL_SSL",
                 "sasl.mechanism": "OAUTHBEARER",
-                'sasl.oauthbearer.method': 'oidc',
                 "sasl.login.callback.handler.class": "com.google.cloud.hosted.kafka.auth.GcpLoginCallbackHandler",
                 "sasl.jaas.config": "org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;"
             },
