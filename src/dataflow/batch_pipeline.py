@@ -3,7 +3,6 @@ import json
 import logging
 
 import apache_beam as beam
-from apache_beam.io.kafka import ReadFromKafka
 from apache_beam.options.pipeline_options import PipelineOptions
 import redis
 
@@ -13,8 +12,9 @@ class SafeParseJson(beam.DoFn):
 
     def process(self, element):
         try:
-            # The element from ReadFromKafka is a KafkaRecord object.
-            msg_value = element.value.decode('utf-8')
+            # The element from ReadFromPubSub is a PubsubMessage object.
+            # The data is directly available as bytes.
+            msg_value = element.decode('utf-8')
             data = json.loads(msg_value)
             if 'event_id' in data:
                 yield data # Success, yield to main output
@@ -50,8 +50,8 @@ class WriteToRedisDoFn(beam.DoFn):
 class LeaderboardPipelineOptions(PipelineOptions):
     @classmethod
     def _add_argparse_args(cls, parser):
-        parser.add_argument("--kafka_bootstrap_servers", required=True)
-        parser.add_argument("--kafka_topic", default="leaderboard_events")
+        parser.add_argument("--gcp_project_id", required=True)
+        parser.add_argument("--pubsub_subscription", required=True)
         parser.add_argument("--redis_host", required=True)
         parser.add_argument("--redis_port", required=True, type=int)
         parser.add_argument("--dead_letter_gcs_path", required=True)
@@ -61,19 +61,10 @@ def run(argv=None):
     custom_options = pipeline_options.view_as(LeaderboardPipelineOptions)
 
     with beam.Pipeline(options=pipeline_options) as pipeline:
-        kafka_records = pipeline | "ReadFromKafka" >> ReadFromKafka(
-            consumer_config={
-                "bootstrap.servers": custom_options.kafka_bootstrap_servers,
-                "auto.offset.reset": "earliest",
-                "security.protocol": "SASL_SSL",
-                "sasl.mechanism": "OAUTHBEARER",
-                "sasl.login.callback.handler.class": "com.google.cloud.hosted.kafka.auth.GcpLoginCallbackHandler",
-                "sasl.jaas.config": "org.apache.kafka.common.security.oauthbearer.OAuthBearerLoginModule required;"
-            },
-            topics=[custom_options.kafka_topic]
-        )
+        subscription_name = f"projects/{custom_options.gcp_project_id}/subscriptions/{custom_options.pubsub_subscription}"
+        pubsub_messages = pipeline | "ReadFromPubSub" >> beam.io.ReadFromPubSub(subscription=subscription_name)
 
-        parsed_results = kafka_records | 'SafeParse' >> beam.ParDo(SafeParseJson()).with_outputs(
+        parsed_results = pubsub_messages | 'SafeParse' >> beam.ParDo(SafeParseJson()).with_outputs(
             SafeParseJson.DEAD_LETTER_TAG, main='main'
         )
 

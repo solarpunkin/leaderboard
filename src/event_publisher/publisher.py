@@ -2,65 +2,42 @@ import os
 import json
 import uuid
 import time
-from confluent_kafka import Producer
-import google.auth
-import google.auth.transport.requests
+from google.cloud import pubsub_v1
 
 # --- Configuration ---
-KAFKA_BROKERS = os.environ.get('KAFKA_BROKERS')
-KAFKA_TOPIC = os.environ.get('KAFKA_TOPIC', 'leaderboard_events')
-
-creds, project = google.auth.default()
-
-def oauth_cb(oauth_config):
-    auth_req = google.auth.transport.requests.Request()
-    creds.refresh(auth_req)
-    return creds.token, int(time.time() + 3600)
-
-def delivery_report(err, msg):
-    """ Called once for each message produced to indicate delivery result.
-        Triggered by poll() or flush(). """
-    if err is not None:
-        print(f'Message delivery failed: {err}')
-    else:
-        # Optional: print for verbosity
-        # print(f'Message delivered to {msg.topic()} [{msg.partition()}]')
-        pass
+GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
+PUBSUB_TOPIC_ID = os.environ.get('PUBSUB_TOPIC_ID', 'leaderboard_events')
 
 def main():
-    producer_config = {
-        'bootstrap.servers': KAFKA_BROKERS,
-        'security.protocol': 'SASL_SSL',
-        'sasl.mechanisms': 'OAUTHBEARER',
-        'oauth_cb': oauth_cb,
-        'acks': 'all'
-    }
+    publisher = pubsub_v1.PublisherClient()
+    topic_path = publisher.topic_path(GCP_PROJECT_ID, PUBSUB_TOPIC_ID)
 
-    producer = Producer(producer_config)
-
-    print("Publishing events...")
+    print(f"Publishing events to {topic_path}...")
     msg_count = 0
     try:
         while True:
             event_id = str(uuid.uuid4())
             data = {'event_id': event_id}
-            producer.produce(KAFKA_TOPIC, key=event_id, value=json.dumps(data), callback=delivery_report)
+            message_json = json.dumps(data)
+            
+            # Data must be a bytestring
+            future = publisher.publish(topic_path, message_json.encode("utf-8"))
+            future.add_done_callback(callback)
             msg_count += 1
 
-            # The non-blocking poll is for serving callbacks quickly.
-            producer.poll(0)
-
-            # Periodically call flush() to block and wait for deliveries.
-            # This is what gives the client time to complete its auth handshake.
             if msg_count % 100 == 0:
-                print(f"Flushing producer after {msg_count} messages...")
-                producer.flush(5) # Block for up to 5 seconds
+                print(f"Published {msg_count} messages.")
+            time.sleep(0.1) # Small delay to avoid overwhelming the system
 
     except KeyboardInterrupt:
         print("Shutting down...")
     finally:
-        print("Performing final flush...")
-        producer.flush()
+        print("Publisher stopped.")
+
+def callback(future):
+    message_id = future.result()
+    # Optional: print for verbosity
+    # print(f"Published message with ID: {message_id}")
 
 if __name__ == '__main__':
     main()
