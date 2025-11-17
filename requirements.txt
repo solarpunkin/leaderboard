@@ -1,6 +1,5 @@
 ruff
 pytest
-confluent-kafka
 google-cloud-storage
 google-cloud-pubsub
 flask
