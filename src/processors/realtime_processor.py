@@ -10,6 +10,11 @@ GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
 PUBSUB_SUBSCRIPTION_ID = os.environ.get('PUBSUB_SUBSCRIPTION_ID')
 GCS_BUCKET_NAME = os.environ.get('GCS_BUCKET_NAME')
 SKETCH_STATE_KEY = 'state/cms_state.json'
+CMS_WIDTH = 10000
+CMS_DEPTH = 5
+
+# --- Clients ---
+storage_client = storage.Client()
 
 def load_sketch():
     bucket = storage_client.bucket(GCS_BUCKET_NAME)

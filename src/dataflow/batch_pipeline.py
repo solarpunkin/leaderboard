@@ -34,9 +34,10 @@ class WriteToRedisDoFn(beam.DoFn):
         self.redis_client = None
 
     def setup(self):
-                    self.redis_client = redis.Redis(
-                        host=self.redis_host, port=self.redis_port, decode_responses=True, ssl=True, ssl_cert_reqs=None
-                    )
+        self.redis_client = redis.Redis(
+            host=self.redis_host, port=self.redis_port, decode_responses=True, ssl=True, ssl_cert_reqs=None
+        )
+
     def process(self, batch):
         try:
             pipe = self.redis_client.pipeline()
@@ -72,7 +73,13 @@ def run(argv=None):
         dead_letter_records = parsed_results[SafeParseJson.DEAD_LETTER_TAG]
 
         (   good_records
-            | "ApplyHourlyWindow" >> beam.WindowInto(beam.window.FixedWindows(3600))
+            | "ApplyHourlyWindow" >> beam.WindowInto(
+                beam.window.FixedWindows(3600),
+                trigger=beam.trigger.AfterWatermark(
+                    early=beam.trigger.Repeatedly(beam.trigger.AfterProcessingTime(60))
+                ),
+                accumulation_mode=beam.trigger.AccumulationMode.ACCUMULATING
+            )
             | "ExtractEventID" >> beam.Map(lambda msg: msg["event_id"])
             | "CountEvents" >> beam.combiners.Count.PerElement()
             | "BatchElements" >> beam.BatchElements(min_batch_size=100, max_batch_size=1000)
