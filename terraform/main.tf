@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 7.0"
     }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 7.0"
+    }
   }
 }
 
@@ -12,8 +16,14 @@ provider "google" {
   region  = var.gcp_region
 }
 
+provider "google-beta" {
+  project = var.gcp_project_id
+  region  = var.gcp_region
+}
+
 data "google_project" "project" {}
 
+# --- Service APIs ---
 resource "google_project_service" "gcp_apis" {
   for_each = toset([
     "compute.googleapis.com",
@@ -21,50 +31,15 @@ resource "google_project_service" "gcp_apis" {
     "storage-component.googleapis.com",
     "iamcredentials.googleapis.com",
     "artifactregistry.googleapis.com",
-    "managedkafka.googleapis.com",
     "redis.googleapis.com",
     "servicenetworking.googleapis.com",
-    "dataflow.googleapis.com"
+    "dataflow.googleapis.com",
+    "pubsub.googleapis.com" # Added for Pub/Sub
   ])
-  service            = each.key
+  service = each.key
 }
 
-resource "google_storage_bucket" "dataflow_staging" {
-  name          = "${var.gcs_bucket_name}-dataflow-staging"
-  location      = var.gcp_region
-  force_destroy = true
-}
-
-# --- Existing Resources to be Read/Imported ---
-
-# Read the existing GCS bucket
-data "google_storage_bucket" "data_lake" {
-  name = var.gcs_bucket_name
-  depends_on = [google_project_service.gcp_apis]
-}
-
-# Define the Kafka cluster resource so we can import it
-resource "google_managed_kafka_cluster" "main_cluster" {
-  cluster_id = "leaderboard-kafka-cluster-main"
-  location   = var.gcp_region
-
-
-  capacity_config {
-    vcpu_count   = 6
-    memory_bytes = "6442450944" # 6 GiB
-  }
-
-  gcp_config {
-    access_config {
-      network_configs {
-        subnet = google_compute_subnetwork.kafka_subnet.id
-      }
-    }
-  }
-  depends_on = [google_project_service.gcp_apis]
-}
-
-# --- Managed Resources ---
+# --- GKE Cluster ---
 
 resource "google_container_cluster" "primary" {
   name                   = var.gke_cluster_name
@@ -74,10 +49,6 @@ resource "google_container_cluster" "primary" {
   deletion_protection    = false
   remove_default_node_pool = true
   initial_node_count     = 1
-
-  workload_identity_config {
-    workload_pool = "${var.gcp_project_id}.svc.id.goog"
-  }
 }
 
 resource "google_container_node_pool" "primary_nodes" {
@@ -92,92 +63,74 @@ resource "google_container_node_pool" "primary_nodes" {
 
   node_config {
     machine_type    = "e2-standard-2"
-    workload_metadata_config {
-      mode = "GKE_METADATA"
-    }
     service_account = google_service_account.app_sa.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+    tags            = ["gke-node"]
   }
 }
+
+# --- IAM & Service Accounts ---
 
 resource "google_service_account" "app_sa" {
   account_id   = "leaderboard-app-sa"
   display_name = "Service Account for Leaderboard App"
 }
 
-resource "google_project_iam_member" "dataflow_admin" {
+resource "google_project_iam_member" "sa_permissions" {
+  for_each = toset([
+    "roles/dataflow.admin",
+    "roles/dataflow.worker",
+    "roles/iam.serviceAccountTokenCreator",
+    "roles/storage.objectAdmin", # Broad access for GCS
+    "roles/artifactregistry.reader",
+    "roles/pubsub.editor" # Added for Pub/Sub
+  ])
   project = var.gcp_project_id
-  role    = "roles/dataflow.admin"
+  role    = each.key
   member  = "serviceAccount:${google_service_account.app_sa.email}"
 }
 
-resource "google_project_iam_member" "dataflow_worker" {
+# --- Pub/Sub Topic and Subscription ---
+resource "google_pubsub_topic" "leaderboard_events" {
+  name    = "leaderboard_events"
   project = var.gcp_project_id
-  role    = "roles/dataflow.worker"
-  member  = "serviceAccount:${google_service_account.app_sa.email}"
 }
 
-resource "google_project_iam_member" "sa_token_creator" {
+resource "google_pubsub_subscription" "leaderboard_batch_sub" {
+  name    = "leaderboard-batch-sub"
+  topic   = google_pubsub_topic.leaderboard_events.id
   project = var.gcp_project_id
-  role    = "roles/iam.serviceAccountTokenCreator"
-  member  = "serviceAccount:${google_service_account.app_sa.email}"
+
+  ack_deadline_seconds = 600 # 10 minutes
+  message_retention_duration = "604800s" # 7 days
+
+  depends_on = [google_pubsub_topic.leaderboard_events]
 }
 
-resource "google_project_iam_member" "gcr_pull_access" {
+resource "google_pubsub_subscription" "leaderboard_realtime_sub" {
+  name    = "leaderboard-realtime-sub"
+  topic   = google_pubsub_topic.leaderboard_events.id
   project = var.gcp_project_id
-  role    = "roles/storage.objectViewer"
-  member  = "serviceAccount:${google_service_account.app_sa.email}"
+
+  ack_deadline_seconds = 20
+  message_retention_duration = "604800s" # 7 days
+
+  depends_on = [google_pubsub_topic.leaderboard_events]
 }
 
-resource "google_project_iam_member" "ar_pull_access" {
-  project = var.gcp_project_id
-  role    = "roles/artifactregistry.reader"
-  member  = "serviceAccount:${google_service_account.app_sa.email}"
+# --- Networking & Other Resources (Unchanged) ---
+
+resource "google_storage_bucket" "dataflow_staging" {
+  name          = "${var.gcs_bucket_name}-dataflow-staging"
+  location      = var.gcp_region
+  force_destroy = true
 }
 
-resource "google_project_iam_member" "kafka_client" {
-  project = var.gcp_project_id
-  role    = "roles/managedkafka.client"
-  member  = "serviceAccount:${google_service_account.app_sa.email}"
+data "google_storage_bucket" "data_lake" {
+  name = var.gcs_bucket_name
+  depends_on = [google_project_service.gcp_apis]
 }
 
-resource "google_storage_bucket_iam_member" "gcs_bucket_access" {
-  bucket = data.google_storage_bucket.data_lake.name
-  role   = "roles/storage.objectAdmin"
-  member = "serviceAccount:${google_service_account.app_sa.email}"
-}
-
-resource "google_managed_kafka_acl" "topic_access_acl" {
-  acl_id   = "topic/leaderboard_events"
-  cluster  = google_managed_kafka_cluster.main_cluster.cluster_id
-  location = google_managed_kafka_cluster.main_cluster.location
-  acl_entries {
-    host            = "*"
-    permission_type = "ALLOW"
-    principal       = "User:${var.gcp_project_id}.svc.id.goog[default/leaderboard-app-sa]"
-    operation       = "WRITE"
-  }
-  acl_entries {
-    host            = "*"
-    permission_type = "ALLOW"
-    principal       = "User:${var.gcp_project_id}.svc.id.goog[default/leaderboard-app-sa]"
-    operation       = "READ"
-  }
-}
-
-resource "google_managed_kafka_acl" "consumer_group_acl" {
-  acl_id   = "consumerGroup/*"
-  cluster  = google_managed_kafka_cluster.main_cluster.cluster_id
-  location = google_managed_kafka_cluster.main_cluster.location
-  acl_entries {
-    host            = "*"
-    permission_type = "ALLOW"
-    principal       = "User:${var.gcp_project_id}.svc.id.goog[default/leaderboard-app-sa]"
-    operation       = "READ"
-  }
-}
-
-# --- Networking for Redis ---
 resource "google_compute_network" "vpc_network" {
   name = "leaderboard-vpc"
   auto_create_subnetworks = false
@@ -204,6 +157,32 @@ resource "google_compute_firewall" "dataflow_internal" {
   target_tags   = ["dataflow"]
 }
 
+resource "google_compute_firewall" "allow_internal_redis" {
+  name    = "allow-internal-redis"
+  network = google_compute_network.vpc_network.name
+
+  allow {
+    protocol = "tcp"
+    ports    = ["6378"]
+  }
+
+  source_ranges = [google_compute_subnetwork.kafka_subnet.ip_cidr_range]
+}
+
+resource "google_compute_firewall" "allow_ssh_via_iap" {
+  name    = "allow-ssh-via-iap"
+  network = google_compute_network.vpc_network.name
+  direction = "INGRESS"
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+
+  source_ranges = ["35.235.240.0/20"]
+  target_tags   = ["gke-node"]
+}
+
 resource "google_compute_global_address" "private_ip_alloc" {
   name          = "leaderboard-redis-ip-range"
   purpose       = "VPC_PEERING"
@@ -218,7 +197,6 @@ resource "google_service_networking_connection" "private_service_connection" {
   reserved_peering_ranges = [google_compute_global_address.private_ip_alloc.name]
 }
 
-# --- Redis Instance (Memorystore) ---
 resource "google_redis_instance" "leaderboard_cache" {
   name           = "leaderboard-redis"
   tier           = "BASIC"
@@ -231,11 +209,6 @@ resource "google_redis_instance" "leaderboard_cache" {
 }
 
 # --- Outputs ---
-
-output "kafka_bootstrap_address" {
-  description = "The authoritative bootstrap address for the Kafka cluster, constructed manually."
-  value       = "bootstrap.${google_managed_kafka_cluster.main_cluster.cluster_id}.${var.gcp_region}.managedkafka.${var.gcp_project_id}.cloud.goog:9092"
-}
 
 output "redis_host" {
   value = google_redis_instance.leaderboard_cache.host
@@ -252,4 +225,19 @@ output "dataflow_staging_bucket_name" {
 output "gcs_bucket_name" {
   description = "The name of the main GCS data lake bucket."
   value       = var.gcs_bucket_name
+}
+
+output "pubsub_topic_name" {
+  description = "The name of the Pub/Sub topic for leaderboard events."
+  value       = google_pubsub_topic.leaderboard_events.name
+}
+
+output "pubsub_batch_subscription_name" {
+  description = "The name of the Pub/Sub subscription for the batch pipeline."
+  value       = google_pubsub_subscription.leaderboard_batch_sub.name
+}
+
+output "pubsub_realtime_subscription_name" {
+  description = "The name of the Pub/Sub subscription for the realtime pipeline."
+  value       = google_pubsub_subscription.leaderboard_realtime_sub.name
 }
