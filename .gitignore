@@ -138,6 +138,7 @@ celerybeat.pid
 
 # Environments
 .env
+.env.example
 .envrc
 .venv
 env/
@@ -217,7 +218,8 @@ __marimo__/
 # Temporary and generated files
 *.bak
 fix_these_errors.txt
-next_steps.txt
+
 Data_monitoring/
 Data_watermark/
-things_to_look.txt
+
+
