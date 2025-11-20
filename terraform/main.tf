@@ -34,7 +34,8 @@ resource "google_project_service" "gcp_apis" {
     "redis.googleapis.com",
     "servicenetworking.googleapis.com",
     "dataflow.googleapis.com",
-    "pubsub.googleapis.com" # Added for Pub/Sub
+    "pubsub.googleapis.com", # Added for Pub/Sub
+    "bigquery.googleapis.com" # Added for BigQuery
   ])
   service = each.key
 }
@@ -83,7 +84,8 @@ resource "google_project_iam_member" "sa_permissions" {
     "roles/iam.serviceAccountTokenCreator",
     "roles/storage.objectAdmin", # Broad access for GCS
     "roles/artifactregistry.reader",
-    "roles/pubsub.editor" # Added for Pub/Sub
+    "roles/pubsub.editor", # Added for Pub/Sub
+    "roles/bigquery.dataEditor" # Added for BigQuery
   ])
   project = var.gcp_project_id
   role    = each.key
@@ -124,6 +126,12 @@ resource "google_storage_bucket" "dataflow_staging" {
   name          = "${var.gcs_bucket_name}-dataflow-staging"
   location      = var.gcp_region
   force_destroy = true
+}
+
+resource "google_storage_bucket_object" "archive_folder" {
+  bucket = var.gcs_bucket_name
+  name   = "archive/dummy.parquet"
+  source = "../dummy.parquet"
 }
 
 data "google_storage_bucket" "data_lake" {
@@ -208,6 +216,30 @@ resource "google_redis_instance" "leaderboard_cache" {
   depends_on = [google_service_networking_connection.private_service_connection]
 }
 
+# --- BigQuery Resources ---
+
+resource "google_bigquery_dataset" "leaderboard_dataset" {
+  dataset_id                 = var.bigquery_dataset_name
+  friendly_name              = var.bigquery_dataset_name
+  description                = "Dataset for leaderboard event data"
+  location                   = var.gcp_region
+  delete_contents_on_destroy = true
+}
+
+resource "google_bigquery_table" "raw_events_external" {
+  dataset_id = google_bigquery_dataset.leaderboard_dataset.dataset_id
+  table_id   = "raw_events"
+  deletion_protection = false
+
+  external_data_configuration {
+    autodetect    = true
+    source_format = "PARQUET"
+    source_uris   = ["${trimsuffix(var.archive_gcs_path, "/")}/*.parquet"]
+    metadata_cache_mode = "AUTOMATIC"
+  }
+  max_staleness = "0-0 1:0:0"  # 1 hour
+}
+
 # --- Outputs ---
 
 output "redis_host" {
@@ -240,4 +272,19 @@ output "pubsub_batch_subscription_name" {
 output "pubsub_realtime_subscription_name" {
   description = "The name of the Pub/Sub subscription for the realtime pipeline."
   value       = google_pubsub_subscription.leaderboard_realtime_sub.name
+}
+
+output "archive_gcs_path" {
+  description = "The GCS path for the archived Parquet files."
+  value       = var.archive_gcs_path
+}
+
+output "bigquery_dataset_id" {
+  description = "The ID of the BigQuery dataset."
+  value       = google_bigquery_dataset.leaderboard_dataset.dataset_id
+}
+
+output "bigquery_table_id" {
+  description = "The ID of the BigQuery external table."
+  value       = google_bigquery_table.raw_events_external.table_id
 }
