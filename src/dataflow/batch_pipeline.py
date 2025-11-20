@@ -5,6 +5,7 @@ import logging
 import apache_beam as beam
 from apache_beam.options.pipeline_options import PipelineOptions
 import redis
+import pyarrow
 
 # Define a custom DoFn for safe parsing and dead-lettering
 class SafeParseJson(beam.DoFn):
@@ -38,11 +39,17 @@ class WriteToRedisDoFn(beam.DoFn):
             host=self.redis_host, port=self.redis_port, decode_responses=True, ssl=True, ssl_cert_reqs=None
         )
 
-    def process(self, batch):
+    def process(self, batch, window=beam.DoFn.WindowParam):
         try:
+            # Format the window end time into a string like "leaderboard:2025-11-18-14"
+            hour_key = window.end.to_utc_datetime().strftime("leaderboard:%Y-%m-%d-%H")
+            
             pipe = self.redis_client.pipeline()
             for event_id, count in batch:
-                pipe.zadd("leaderboard", {event_id: count}, incr=True)
+                # Write to the key for that specific hour
+                pipe.zadd(hour_key, {event_id: count}, incr=True)
+            # Set an expiry on the key so old data is automatically deleted after a week
+            pipe.expire(hour_key, 3600 * 24 * 7)
             pipe.execute()
         except Exception as e:
             logging.error(f"Failed to write batch of size {len(batch)} to Redis: {e}")
@@ -56,6 +63,7 @@ class LeaderboardPipelineOptions(PipelineOptions):
         parser.add_argument("--redis_host", required=True)
         parser.add_argument("--redis_port", required=True, type=int)
         parser.add_argument("--dead_letter_gcs_path", required=True)
+        parser.add_argument("--archive_gcs_path", required=True)
 
 def run(argv=None):
     pipeline_options = PipelineOptions(argv)
@@ -94,6 +102,21 @@ def run(argv=None):
             | 'WindowDeadLetter' >> beam.WindowInto(beam.window.FixedWindows(300))
             | 'FormatDeadLetter' >> beam.Map(lambda x: str(x))
             | 'WriteDeadLetterToGCS' >> beam.io.WriteToText(custom_options.dead_letter_gcs_path)
+        )
+
+        (   good_records  # This is the same PCollection of parsed JSON messages
+            | "Window for Archiving" >> beam.WindowInto(beam.window.FixedWindows(300)) # 5-minute files
+            | "Write to Parquet" >> beam.io.WriteToParquet(
+                file_path_prefix=custom_options.archive_gcs_path,
+                file_name_suffix=".parquet",
+                # Define the schema for the Parquet file based on your JSON.
+                # This ensures the data is strongly typed for BigQuery.
+                schema=pyarrow.schema([
+                    pyarrow.field('event_id', pyarrow.string())
+                    # If you add a timestamp to your events, define it here too:
+                    # pyarrow.field('timestamp', pyarrow.timestamp('ns')),
+                ])
+            )
         )
 
 if __name__ == "__main__":

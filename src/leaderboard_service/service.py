@@ -8,6 +8,8 @@ from flask import Flask, jsonify, request
 import redis
 from common.count_min_sketch import CountMinSketch
 
+from datetime import datetime, timedelta
+import uuid
 import time
 import threading
 
@@ -38,17 +40,44 @@ redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=Tr
 CMS_WIDTH = 1000
 CMS_DEPTH = 5
 
-def get_top_k_from_redis(k=10):
-    # ZREVRANGE returns members from highest to lowest score
-    # withscores=True returns a list of tuples: [(member, score), ...]
-    top_k_raw = redis_client.zrevrange('leaderboard', 0, k - 1, withscores=True)
-    return [{'event_id': item[0], 'count': int(item[1])} for item in top_k_raw]
-
 @app.route('/leaderboard', methods=['GET'])
 def leaderboard():
-    k = request.args.get('k', default=10, type=int)
-    top_k = get_top_k_from_redis(k)
-    return jsonify(top_k)
+    try:
+        hours = request.args.get('hours', type=int)
+        k = request.args.get('k', default=10, type=int)
+
+        if hours is None:
+            # For a cumulative, all-time leaderboard, we would need a separate key.
+            # This implementation focuses on time-windowed queries.
+            # We can return the most recent hour as a default.
+            hours = 1
+
+        # 1. Generate the list of Redis keys for the last X hours
+        keys_to_fetch = []
+        now = datetime.utcnow()
+        for i in range(hours):
+            target_time = now - timedelta(hours=i)
+            keys_to_fetch.append(target_time.strftime("leaderboard:%Y-%m-%d-%H"))
+        
+        if not keys_to_fetch:
+            return jsonify([])
+
+        # 2. Use Redis to aggregate the scores from all those keys into a temporary key
+        temp_agg_key = f"temp_agg:{uuid.uuid4()}"
+        redis_client.zunionstore(temp_agg_key, keys_to_fetch, aggregate='SUM')
+        
+        # 3. Get the Top-K from the temporary aggregated set
+        top_k_raw = redis_client.zrevrange(temp_agg_key, 0, k - 1, withscores=True)
+        
+        # 4. Clean up the temporary key
+        redis_client.delete(temp_agg_key)
+        
+        # 5. Format and return the result
+        return jsonify([{'event_id': item[0], 'count': int(item[1])} for item in top_k_raw])
+    except Exception as e:
+        # Log the error and return a server error
+        app.logger.error(f"Error in leaderboard endpoint: {e}")
+        return jsonify({"error": "An internal error occurred"}), 500
 
 def get_sketch_from_cache():
     """Gets the CMS sketch, updating from GCS if the cache is expired."""
