@@ -35,7 +35,8 @@ resource "google_project_service" "gcp_apis" {
     "servicenetworking.googleapis.com",
     "dataflow.googleapis.com",
     "pubsub.googleapis.com", # Added for Pub/Sub
-    "bigquery.googleapis.com" # Added for BigQuery
+    "bigquery.googleapis.com", # Added for BigQuery
+    "bigqueryconnection.googleapis.com" # Added for BigLake
   ])
   service = each.key
 }
@@ -91,6 +92,14 @@ resource "google_project_iam_member" "sa_permissions" {
   role    = each.key
   member  = "serviceAccount:${google_service_account.app_sa.email}"
 }
+
+# Grant BQ Connection SA read access to the GCS bucket
+resource "google_project_iam_member" "bigquery_connection_gcs_access" {
+  project = var.gcp_project_id
+  role    = "roles/storage.objectViewer"
+  member  = "serviceAccount:${google_bigquery_connection.gcs_connection.cloud_resource.0.service_account_id}"
+}
+
 
 # --- Pub/Sub Topic and Subscription ---
 resource "google_pubsub_topic" "leaderboard_events" {
@@ -218,6 +227,13 @@ resource "google_redis_instance" "leaderboard_cache" {
 
 # --- BigQuery Resources ---
 
+resource "google_bigquery_connection" "gcs_connection" {
+  connection_id = "gcs-archive-connection"
+  project       = var.gcp_project_id
+  location      = var.gcp_region
+  cloud_resource {}
+}
+
 resource "google_bigquery_dataset" "leaderboard_dataset" {
   dataset_id                 = var.bigquery_dataset_name
   friendly_name              = var.bigquery_dataset_name
@@ -231,13 +247,22 @@ resource "google_bigquery_table" "raw_events_external" {
   table_id   = "raw_events"
   deletion_protection = false
 
+  schema = jsonencode([
+    {
+      "name": "event_id",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    }
+  ])
+
   external_data_configuration {
-    autodetect    = true
+    autodetect    = false
     source_format = "PARQUET"
     source_uris   = ["${trimsuffix(var.archive_gcs_path, "/")}/*.parquet"]
+    connection_id = google_bigquery_connection.gcs_connection.id
     metadata_cache_mode = "AUTOMATIC"
   }
-  max_staleness = "0-0 1:0:0"  # 1 hour
+  max_staleness = "0-0 0 1:0:0"  # 1 hour
 }
 
 # --- Outputs ---
