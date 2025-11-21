@@ -48,8 +48,8 @@ class WriteToRedisDoFn(beam.DoFn):
             for event_id, count in batch:
                 # Write to the key for that specific hour
                 pipe.zadd(hour_key, {event_id: count}, incr=True)
-            # Set an expiry on the key so old data is automatically deleted after a week
-            pipe.expire(hour_key, 3600 * 24 * 7)
+            # Set an expiry on the key so old data is automatically deleted after a day
+            pipe.expire(hour_key, 3600 * 24 * 1)
             pipe.execute()
         except Exception as e:
             logging.error(f"Failed to write batch of size {len(batch)} to Redis: {e}")
@@ -84,7 +84,7 @@ def run(argv=None):
             | "ApplyHourlyWindow" >> beam.WindowInto(
                 beam.window.FixedWindows(3600),
                 trigger=beam.trigger.AfterWatermark(
-                    early=beam.trigger.Repeatedly(beam.trigger.AfterProcessingTime(60))
+                    early=beam.trigger.Repeatedly(beam.trigger.AfterProcessingTime(1800))
                 ),
                 accumulation_mode=beam.trigger.AccumulationMode.ACCUMULATING
             )
@@ -105,7 +105,7 @@ def run(argv=None):
         )
 
         (   good_records  # This is the same PCollection of parsed JSON messages
-            | "Window for Archiving" >> beam.WindowInto(beam.window.FixedWindows(300)) # 5-minute files
+            | "Window for Archiving" >> beam.WindowInto(beam.window.FixedWindows(1800)) # 30-minute files
             | "Write to Parquet" >> beam.io.WriteToParquet(
                 file_path_prefix=custom_options.archive_gcs_path,
                 file_name_suffix=".parquet",
