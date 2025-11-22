@@ -54,6 +54,9 @@ class WriteToRedisDoFn(beam.DoFn):
         except Exception as e:
             logging.error(f"Failed to write batch of size {len(batch)} to Redis: {e}")
 
+from apache_beam.io.filebasedsink import FileBasedSink
+from apache_beam.io.parquetio import ParquetSink
+
 # Define custom pipeline options
 class LeaderboardPipelineOptions(PipelineOptions):
     @classmethod
@@ -64,6 +67,7 @@ class LeaderboardPipelineOptions(PipelineOptions):
         parser.add_argument("--redis_port", required=True, type=int)
         parser.add_argument("--dead_letter_gcs_path", required=True)
         parser.add_argument("--archive_gcs_path", required=True)
+        parser.add_argument("--temp_staging_bucket", required=True)
 
 def run(argv=None):
     pipeline_options = PipelineOptions(argv)
@@ -104,18 +108,23 @@ def run(argv=None):
             | 'WriteDeadLetterToGCS' >> beam.io.WriteToText(custom_options.dead_letter_gcs_path)
         )
 
+        # Define the schema for the Parquet files
+        parquet_schema = pyarrow.schema([
+            pyarrow.field('event_id', pyarrow.string())
+        ])
+
         (   good_records  # This is the same PCollection of parsed JSON messages
             | "Window for Archiving" >> beam.WindowInto(beam.window.FixedWindows(1800)) # 30-minute files
-            | "Write to Parquet" >> beam.io.WriteToParquet(
-                file_path_prefix=custom_options.archive_gcs_path,
-                file_name_suffix=".parquet",
-                # Define the schema for the Parquet file based on your JSON.
-                # This ensures the data is strongly typed for BigQuery.
-                schema=pyarrow.schema([
-                    pyarrow.field('event_id', pyarrow.string())
-                    # If you add a timestamp to your events, define it here too:
-                    # pyarrow.field('timestamp', pyarrow.timestamp('ns')),
-                ])
+            | "Write to Parquet" >> beam.io.Write(
+                FileBasedSink(
+                    file_path_prefix=custom_options.archive_gcs_path,
+                    file_name_suffix=".parquet",
+                    # Explicitly define a temporary directory in the staging bucket.
+                    # This prevents temporary files from appearing in the final
+                    # output directory, which avoids race conditions with BigQuery.
+                    temp_directory=f"gs://{custom_options.temp_staging_bucket}/parquet_temp",
+                    sink=ParquetSink(parquet_schema)
+                )
             )
         )
 

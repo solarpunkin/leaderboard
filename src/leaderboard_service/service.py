@@ -13,6 +13,9 @@ import uuid
 import time
 import threading
 
+from cachetools import cached, TTLCache
+from cachetools.keys import hashkey
+
 app = Flask(__name__)
 
 # --- Configuration ---
@@ -21,7 +24,10 @@ SKETCH_STATE_KEY = 'state/cms_state.json'
 REDIS_HOST = os.environ.get('REDIS_HOST')
 REDIS_PORT = os.environ.get('REDIS_PORT')
 
-# --- In-Memory Cache for CMS Sketch ---
+# --- In-Memory Caches ---
+# Cache for the main leaderboard endpoint. Results are cached for 10 seconds.
+leaderboard_cache = TTLCache(maxsize=128, ttl=10)
+
 # This cache holds the sketch data to avoid hitting GCS on every approximate query.
 # It's stored per-worker (per pod replica). A shared cache like Redis would be overkill
 # for this approximate data, and this per-worker cache is simpler and has no cost.
@@ -41,6 +47,7 @@ CMS_WIDTH = 1000
 CMS_DEPTH = 5
 
 @app.route('/leaderboard', methods=['GET'])
+@cached(leaderboard_cache, key=lambda: hashkey(request.args.get('hours', default=1, type=int), request.args.get('k', default=10, type=int)))
 def leaderboard():
     try:
         hours = request.args.get('hours', type=int)
