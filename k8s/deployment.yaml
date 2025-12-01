@@ -24,8 +24,9 @@ spec:
       serviceAccountName: leaderboard-app-sa
       containers:
       - name: processor
-        image: gcr.io/aftermath-69/leaderboard:dccfd71
-        command: ["python3", "src/processors/realtime_processor.py"]
+        image: gcr.io/aftermath-69/leaderboard:b3d3a86
+        imagePullPolicy: Always
+        command: ["python3", "/app/src/processors/realtime_processor.py"]
         resources:
           requests:
             memory: "128Mi"
@@ -36,6 +37,11 @@ spec:
         env:
         - name: PYTHONPATH
           value: /app/src
+        - name: PUBSUB_SUBSCRIPTION_ID
+          valueFrom:
+            configMapKeyRef:
+              name: leaderboard-config
+              key: PUBSUB_SUBSCRIPTION_ID_REALTIME
         envFrom:
         - configMapRef:
             name: leaderboard-config
@@ -47,7 +53,7 @@ kind: Deployment
 metadata:
   name: leaderboard-api
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: leaderboard-api
@@ -59,8 +65,9 @@ spec:
       serviceAccountName: leaderboard-app-sa
       containers:
       - name: api
-        image: gcr.io/aftermath-69/leaderboard:dccfd71
-        command: ["python3", "src/leaderboard_service/service.py"]
+        image: gcr.io/aftermath-69/leaderboard:b3d3a86
+        imagePullPolicy: Always
+        command: ["python3", "/app/src/leaderboard_service/service.py"]
         ports:
         - containerPort: 8080
         resources:
@@ -112,11 +119,22 @@ spec:
       serviceAccountName: leaderboard-app-sa
       containers:
       - name: publisher
-        image: gcr.io/aftermath-69/leaderboard:dccfd71 # PLACEHOLDER
-        command: ["python3", "src/event_publisher/publisher.py"]
+        image: gcr.io/aftermath-69/leaderboard:b3d3a86 # PLACEHOLDER
+        imagePullPolicy: Always
+        command: ["python3", "/app/src/event_publisher/publisher.py"]
         env:
         - name: PYTHONPATH
           value: /app/src
+        - name: GCP_PROJECT_ID
+          valueFrom:
+            configMapKeyRef:
+              name: leaderboard-config
+              key: GCP_PROJECT_ID
+        - name: PUBSUB_TOPIC_ID
+          valueFrom:
+            configMapKeyRef:
+              name: leaderboard-config
+              key: PUBSUB_TOPIC_ID
         envFrom:
         - configMapRef:
             name: leaderboard-config

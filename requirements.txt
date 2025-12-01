@@ -3,8 +3,8 @@ pytest
 google-cloud-storage
 google-cloud-pubsub
 flask
-pyarrow
+pyarrow==14.0.0
 redis
-apache-beam[gcp]
+apache-beam[gcp]==2.69.0
 
 

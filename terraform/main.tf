@@ -137,16 +137,16 @@ resource "google_storage_bucket" "dataflow_staging" {
   force_destroy = true
 }
 
-resource "google_storage_bucket_object" "archive_folder" {
-  bucket = var.gcs_bucket_name
-  name   = "archive/dummy.parquet"
-  source = "../dummy.parquet"
-}
+# This bucket will now be managed by Terraform and created in the correct region.
+resource "google_storage_bucket" "data_lake" {
+  name          = var.gcs_bucket_name
+  location      = var.gcp_region # Ensures the bucket is in us-central1
+  force_destroy = true           # Recommended for non-production buckets
+  uniform_bucket_level_access = true
 
-data "google_storage_bucket" "data_lake" {
-  name = var.gcs_bucket_name
   depends_on = [google_project_service.gcp_apis]
 }
+
 
 resource "google_compute_network" "vpc_network" {
   name = "leaderboard-vpc"
@@ -252,13 +252,28 @@ resource "google_bigquery_table" "raw_events_external" {
       "name": "event_id",
       "type": "STRING",
       "mode": "NULLABLE"
+    },
+    {
+      "name": "score",
+      "type": "INTEGER",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "user_id",
+      "type": "STRING",
+      "mode": "NULLABLE"
+    },
+    {
+      "name": "timestamp",
+      "type": "TIMESTAMP",
+      "mode": "NULLABLE"
     }
   ])
 
   external_data_configuration {
     autodetect    = false
     source_format = "PARQUET"
-    source_uris   = ["${trimsuffix(var.archive_gcs_path, "/")}/*.parquet"]
+    source_uris   = ["${trimsuffix(var.archive_gcs_path, "/")}/final/*.parquet"]
     connection_id = google_bigquery_connection.gcs_connection.id
     metadata_cache_mode = "AUTOMATIC"
   }

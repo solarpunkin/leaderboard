@@ -25,3 +25,14 @@ variable "gcs_bucket_name" {
   description = "The name for the GCS bucket."
   type        = string
 }
+
+variable "archive_gcs_path" {
+  description = "The GCS path for the archived Parquet files."
+  type        = string
+}
+
+variable "bigquery_dataset_name" {
+  description = "The name for the BigQuery dataset."
+  type        = string
+  default     = "leaderboard_dataset"
+}
